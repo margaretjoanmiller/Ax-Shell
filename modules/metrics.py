@@ -28,7 +28,6 @@ class MetricsProvider:
     It updates periodically so that all widgets querying it display the same values.
     """
     def __init__(self):
-        self.gpu = []
         self.cpu = 0.0
         self.mem = 0.0
         self.disk = []
@@ -45,8 +44,6 @@ class MetricsProvider:
         self.cpu = psutil.cpu_percent(interval=0)
         self.mem = psutil.virtual_memory().percent
         self.disk = [psutil.disk_usage(path).percent for path in data.BAR_METRICS_DISKS]
-        info = self.get_gpu_info()
-        self.gpu = [int(v["gpu_util"][:-1]) for v in info]
 
         battery = psutil.sensors_battery()
         if battery is None:
@@ -59,16 +56,11 @@ class MetricsProvider:
         return True
 
     def get_metrics(self):
-        return (self.cpu, self.mem, self.disk, self.gpu)
+        return (self.cpu, self.mem, self.disk)
 
     def get_battery(self):
         return (self.bat_percent, self.bat_charging)
 
-    def get_gpu_info(self):
-        try:
-            return json.loads(subprocess.check_output(["nvtop", "-s"]))
-        except:
-            return []
 
 # Global instance to share data between both widgets.
 shared_provider = MetricsProvider()
@@ -113,30 +105,23 @@ class Metrics(Box):
         )
 
         # Only include enabled metrics
-        visible = getattr(data, "METRICS_VISIBLE", {'cpu': True, 'ram': True, 'disk': True, 'gpu': True})
+        visible = getattr(data, "METRICS_VISIBLE", {'cpu': True, 'ram': True, 'disk': True})
         disks = [SingularMetric("disk", f"DISK ({path})" if len(data.BAR_METRICS_DISKS) != 1 else "DISK", icons.disk)
                  for path in data.BAR_METRICS_DISKS] if visible.get('disk', True) else []
-        gpu_info = shared_provider.get_gpu_info()
-        gpus = [SingularMetric(f"gpu", f"GPU ({v['device_name']})" if len(gpu_info) != 1 else "GPU", icons.gpu)
-                for v in gpu_info] if visible.get('gpu', True) else []
 
         self.cpu = SingularMetric("cpu", "CPU", icons.cpu) if visible.get('cpu', True) else None
         self.ram = SingularMetric("ram", "RAM", icons.memory) if visible.get('ram', True) else None
         self.disk = disks
-        self.gpu = gpus
 
         self.scales = []
         if self.disk: self.scales.extend([v.box for v in self.disk])
         if self.ram: self.scales.append(self.ram.box)
         if self.cpu: self.scales.append(self.cpu.box)
-        if self.gpu: self.scales.extend([v.box for v in self.gpu])
 
         if self.cpu: self.cpu.usage.set_sensitive(False)
         if self.ram: self.ram.usage.set_sensitive(False)
         for disk in self.disk:
             disk.usage.set_sensitive(False)
-        for gpu in self.gpu:
-            gpu.usage.set_sensitive(False)
 
         for x in self.scales:
             self.add(x)
@@ -144,7 +129,7 @@ class Metrics(Box):
         GLib.timeout_add_seconds(1, self.update_status)
 
     def update_status(self):
-        cpu, mem, disks, gpus = shared_provider.get_metrics()
+        cpu, mem, disks = shared_provider.get_metrics()
         idx = 0
         if self.cpu:
             self.cpu.usage.value = cpu / 100.0
@@ -152,8 +137,6 @@ class Metrics(Box):
             self.ram.usage.value = mem / 100.0
         for i, disk in enumerate(self.disk):
             disk.usage.value = disks[i] / 100.0
-        for i, gpu in enumerate(self.gpu):
-            gpu.usage.value = gpus[i] / 100.0
         return True
 
 class SingularMetricSmall:
@@ -205,17 +188,13 @@ class MetricsSmall(Button):
             all_visible=True,
         )
 
-        visible = getattr(data, "METRICS_SMALL_VISIBLE", {'cpu': True, 'ram': True, 'disk': True, 'gpu': True})
+        visible = getattr(data, "METRICS_SMALL_VISIBLE", {'cpu': True, 'ram': True, 'disk': True})
         disks = [SingularMetricSmall("disk", f"DISK ({path})" if len(data.BAR_METRICS_DISKS) != 1 else "DISK", icons.disk)
                  for path in data.BAR_METRICS_DISKS] if visible.get('disk', True) else []
-        gpu_info = shared_provider.get_gpu_info()
-        gpus = [SingularMetricSmall(f"gpu", f"GPU ({v['device_name']})" if len(gpu_info) != 1 else "GPU", icons.gpu)
-                for v in gpu_info] if visible.get('gpu', True) else []
 
         self.cpu = SingularMetricSmall("cpu", "CPU", icons.cpu) if visible.get('cpu', True) else None
         self.ram = SingularMetricSmall("ram", "RAM", icons.memory) if visible.get('ram', True) else None
         self.disk = disks
-        self.gpu = gpus
 
         # Add only enabled metrics
         for disk in self.disk:
@@ -226,9 +205,6 @@ class MetricsSmall(Button):
             main_box.add(Box(name="metrics-sep"))
         if self.cpu:
             main_box.add(self.cpu.box)
-        for gpu in self.gpu:
-            main_box.add(Box(name="metrics-sep"))
-            main_box.add(gpu.box)
 
         self.add(main_box)
 
@@ -258,8 +234,6 @@ class MetricsSmall(Button):
             if self.ram: self.ram.revealer.set_reveal_child(True)
             for disk in self.disk:
                 disk.revealer.set_reveal_child(True)
-            for gpu in self.gpu:
-                gpu.revealer.set_reveal_child(True)
             return False
 
     def on_mouse_leave(self, widget, event):
@@ -278,13 +252,11 @@ class MetricsSmall(Button):
             if self.ram: self.ram.revealer.set_reveal_child(False)
             for disk in self.disk:
                 disk.revealer.set_reveal_child(False)
-            for gpu in self.gpu:
-                gpu.revealer.set_reveal_child(False)
             self.hide_timer = None
             return False
 
     def update_metrics(self):
-        cpu, mem, disks, gpus = shared_provider.get_metrics()
+        cpu, mem, disks = shared_provider.get_metrics()
         idx = 0
         if self.cpu:
             self.cpu.circle.set_value(cpu / 100.0)
@@ -295,16 +267,12 @@ class MetricsSmall(Button):
         for i, disk in enumerate(self.disk):
             disk.circle.set_value(disks[i] / 100.0)
             disk.level.set_label(self._format_percentage(int(disks[i])))
-        for i, gpu in enumerate(self.gpu):
-            gpu.circle.set_value(gpus[i] / 100.0)
-            gpu.level.set_label(self._format_percentage(int(gpus[i])))
 
         # Tooltip: only show enabled metrics
         tooltip_metrics = []
         if self.disk: tooltip_metrics.extend(self.disk)
         if self.ram: tooltip_metrics.append(self.ram)
         if self.cpu: tooltip_metrics.append(self.cpu)
-        if self.gpu: tooltip_metrics.extend(self.gpu)
         self.set_tooltip_markup((" - " if not data.VERTICAL else "\n").join([v.markup() for v in tooltip_metrics]))
 
         return True
